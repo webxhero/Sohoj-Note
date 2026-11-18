@@ -1,4 +1,4 @@
-# Sohoj Note v0.8.2
+# Sohoj Note v0.8.4
 
 Sohoj Note is a local-first, installable PWA for organizing handwritten notes by course and notebook.
 
@@ -45,3 +45,23 @@ Sohoj Note is a local-first, installable PWA for organizing handwritten notes by
 ## Data compatibility
 
 The existing IndexedDB database name and backup format remain unchanged so existing local notes and `.smartnote.json` backup files remain compatible.
+
+## v0.8.3 full-page page editor
+
+- Replaced the page-edit modal with a dedicated full-page editor view.
+- Added icon-only rotate-left, rotate-right, and crop/straighten controls with accessible labels and tooltips.
+- Added a page header and safe-area-aware sticky save bar for mobile.
+- Restores the previous notebook scroll position when returning from the editor.
+- Supports Escape to return to the notebook when a save is not in progress.
+- Keeps the existing image processing, IndexedDB schema, and backup format unchanged.
+
+
+## v0.8.4 mobile notebook layout and page action fix
+
+- Constrained page previews to a fixed thumbnail area with `object-fit: contain`, so portrait or very tall images cannot push the page toolbar off-screen.
+- Kept all five page actions in a dedicated toolbar below each image.
+- Removed the large “Add notes to this notebook” intro block.
+- Arranged Photo, Scan, and Upload as three compact actions on one mobile row, with the optional chapter field above.
+- Moved selected-page and full-notebook PDF export buttons below the entire page grid.
+- Preserved the two-column mobile page grid, IndexedDB schema, and `.smartnote.json` backup format.
+

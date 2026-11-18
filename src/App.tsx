@@ -76,6 +76,7 @@ function App() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const scanInputRef = useRef<HTMLInputElement>(null);
+  const editorReturnScrollY = useRef(0);
 
   const selectedCourse = courses.find((course) => course.id === selectedCourseId) ?? null;
   const selectedNotebook = notebooks.find((notebook) => notebook.id === selectedNotebookId) ?? null;
@@ -91,6 +92,28 @@ function App() {
   useEffect(() => {
     return () => imageUrls.forEach((url) => URL.revokeObjectURL(url));
   }, [imageUrls]);
+
+  useEffect(() => {
+    if (editingPage) {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      return;
+    }
+
+    if (editorReturnScrollY.current > 0) {
+      const returnTo = editorReturnScrollY.current;
+      editorReturnScrollY.current = 0;
+      window.scrollTo({ top: returnTo, behavior: 'auto' });
+    }
+  }, [editingPage]);
+
+  useEffect(() => {
+    if (!editingPage) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isApplyingEdit) setEditingPage(null);
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [editingPage, isApplyingEdit]);
 
   useEffect(() => {
     let active = true;
@@ -395,6 +418,7 @@ function App() {
   }
 
   function openPageEditor(page: NotePage) {
+    editorReturnScrollY.current = window.scrollY;
     setEditingPage(page);
     setEditRotation(0);
     setEditFilter('original');
@@ -483,7 +507,115 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${editingPage ? 'app-shell-page-editor' : ''}`}>
+      {editingPage ? (
+        <main className="page-editor-page" aria-labelledby="editor-title">
+          <header className="page-editor-header">
+            <button
+              type="button"
+              className="page-editor-back"
+              onClick={() => setEditingPage(null)}
+              disabled={isApplyingEdit}
+              aria-label="Back to notebook"
+            >
+              <ArrowLeft size={19} />
+              <span>Back to notebook</span>
+            </button>
+            <div className="page-editor-heading">
+              <span className="eyebrow">PAGE TOOLS</span>
+              <h1 id="editor-title">Edit page</h1>
+              <p>
+                {selectedNotebook?.name ?? 'Notebook'} · Page {Math.max(1, pages.findIndex((page) => page.id === editingPage.id) + 1)}
+              </p>
+            </div>
+          </header>
+
+          <div className="page-editor-content">
+            {error && (
+              <div className="notice notice-error" role="alert">
+                <span>{error}</span>
+                <button className="notice-close" aria-label="Dismiss error" onClick={() => setError('')}>
+                  <X size={15} />
+                </button>
+              </div>
+            )}
+
+            <div className="editor-preview page-editor-preview">
+              <img
+                src={editingPage.id === undefined ? '' : imageUrls.get(editingPage.id)}
+                alt="Page preview"
+                style={{
+                  transform: `rotate(${editRotation}deg)`,
+                  filter: editFilter === 'grayscale'
+                    ? 'grayscale(1) contrast(1.12)'
+                    : editFilter === 'document'
+                      ? 'grayscale(1) contrast(1.55) brightness(1.08)'
+                      : 'none',
+                }}
+              />
+            </div>
+
+            <section className="editor-tools page-editor-tools" aria-label="Page editing tools">
+              <div className="editor-tool-row page-editor-rotate-row">
+                <div className="editor-tool-heading">
+                  <strong>Rotate &amp; crop</strong>
+                  <span>Adjust the page before saving.</span>
+                </div>
+                <div className="editor-icon-actions">
+                  <button
+                    type="button"
+                    className="editor-icon-button"
+                    title="Rotate left"
+                    aria-label="Rotate left"
+                    onClick={() => setEditRotation((value) => (value + 270) % 360)}
+                    disabled={isApplyingEdit}
+                  >
+                    <RotateCcw size={19} />
+                  </button>
+                  <button
+                    type="button"
+                    className="editor-icon-button"
+                    title="Rotate right"
+                    aria-label="Rotate right"
+                    onClick={() => setEditRotation((value) => (value + 90) % 360)}
+                    disabled={isApplyingEdit}
+                  >
+                    <RotateCw size={19} />
+                  </button>
+                  <button
+                    type="button"
+                    className="editor-icon-button"
+                    title="Crop and straighten"
+                    aria-label="Crop and straighten"
+                    onClick={() => openPageScanner(editingPage)}
+                    disabled={isApplyingEdit}
+                  >
+                    <Scan size={19} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="editor-filter-row page-editor-filter-row">
+                <strong>Appearance</strong>
+                <div className="filter-options">
+                  <button type="button" className={`filter-option ${editFilter === 'original' ? 'active' : ''}`} onClick={() => setEditFilter('original')}>Original</button>
+                  <button type="button" className={`filter-option ${editFilter === 'grayscale' ? 'active' : ''}`} onClick={() => setEditFilter('grayscale')}>Grayscale</button>
+                  <button type="button" className={`filter-option ${editFilter === 'document' ? 'active' : ''}`} onClick={() => setEditFilter('document')}>Document</button>
+                </div>
+              </div>
+              <p className="editor-help">Document mode increases contrast for handwritten notes. The original page is replaced only when you choose Save changes.</p>
+            </section>
+          </div>
+
+          <footer className="page-editor-footer">
+            <button className="secondary-button" onClick={() => setEditingPage(null)} disabled={isApplyingEdit}>Cancel</button>
+            <button className="primary-button" onClick={() => void savePageEdit()} disabled={isApplyingEdit}>
+              {isApplyingEdit ? 'Saving…' : 'Save changes'}
+            </button>
+          </footer>
+        </main>
+      ) : (
+        <>
       <aside className="sidebar">
         <div className="brand-row">
           <div className="brand-mark"><BookOpen size={21} strokeWidth={2.2} /></div>
@@ -642,24 +774,17 @@ function App() {
                 <button className="text-button danger-text" onClick={() => void handleDeleteNotebook(selectedNotebook)}><Trash2 size={15} /> Delete notebook</button>
               </div>
 
-              <section className="capture-panel">
-                <div className="capture-copy">
-                  <div className="capture-icon"><Sparkles size={20} /></div>
-                  <div>
-                    <h2>Add notes to this notebook</h2>
-                    <p>Take a photo or choose images from your device.</p>
-                  </div>
-                </div>
-                <div className="capture-controls">
+              <section className="capture-panel capture-panel-compact" aria-label="Add pages">
+                <div className="capture-controls capture-controls-compact">
                   <input className="chapter-input" value={chapterDraft} onChange={(event) => setChapterDraft(event.target.value)} placeholder="Chapter name (optional)" aria-label="Chapter name" />
-                  <button className="secondary-button" onClick={() => cameraInputRef.current?.click()} disabled={isSaving}>
-                    <Camera size={17} /> Take photo
+                  <button className="secondary-button capture-action-button" type="button" title="Take a photo" aria-label="Take a photo" onClick={() => cameraInputRef.current?.click()} disabled={isSaving}>
+                    <Camera size={17} /> <span>Photo</span>
                   </button>
-                  <button className="secondary-button" onClick={() => scanInputRef.current?.click()} disabled={isSaving}>
-                    <Scan size={17} /> Scan document
+                  <button className="secondary-button capture-action-button" type="button" title="Scan document" aria-label="Scan document" onClick={() => scanInputRef.current?.click()} disabled={isSaving}>
+                    <Scan size={17} /> <span>Scan</span>
                   </button>
-                  <button className="primary-button" onClick={() => uploadInputRef.current?.click()} disabled={isSaving}>
-                    <Upload size={17} /> Upload images
+                  <button className="primary-button capture-action-button" type="button" title="Upload images" aria-label="Upload images" onClick={() => uploadInputRef.current?.click()} disabled={isSaving}>
+                    <Upload size={17} /> <span>Upload</span>
                   </button>
                   <input ref={cameraInputRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => event.target.files && void handleFiles(event.target.files)} />
                   <input ref={scanInputRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => void startNewScan(event.target.files?.[0])} />
@@ -672,14 +797,6 @@ function App() {
                 <div>
                   <h2>Your pages <span className="count-badge">{pages.length}</span></h2>
                   <p>{pages.length ? 'Select pages to export, or download an individual image.' : 'Your notebook is ready for its first page.'}</p>
-                </div>
-                <div className="export-actions">
-                  <button className="secondary-button" onClick={() => void handleExportPdf(true)} disabled={isExporting || selectedPageIds.length === 0}>
-                    <FileText size={16} /> Export selected ({selectedPageIds.length})
-                  </button>
-                  <button className="primary-button" onClick={() => void handleExportPdf(false)} disabled={isExporting || pages.length === 0}>
-                    <Download size={16} /> {isExporting ? 'Preparing PDF…' : 'Export all PDF'}
-                  </button>
                 </div>
               </div>
 
@@ -707,16 +824,24 @@ function App() {
                             <strong>Page {index + 1}</strong>
                             <span>{page.chapter}</span>
                           </div>
-                          <div className="page-card-actions">
-                            <button className="icon-button" title="Move page up" aria-label="Move page up" disabled={index === 0} onClick={() => void movePage(page, -1)}><ArrowUp size={15} /></button>
-                            <button className="icon-button" title="Move page down" aria-label="Move page down" disabled={index === pages.length - 1} onClick={() => void movePage(page, 1)}><ArrowDown size={15} /></button>
-                            <button className="icon-button" title="Edit page" aria-label="Edit page" onClick={() => openPageEditor(page)}><Pencil size={15} /></button>
-                            <button className="icon-button" title="Download image" aria-label="Download image" onClick={() => handleDownloadImage(page)}><ImageIcon size={15} /></button>
-                            <button className="icon-button delete-icon" title="Delete page" aria-label="Delete page" onClick={() => void handleDeletePage(page)}><Trash2 size={15} /></button>
+                          <div className="page-card-actions" role="group" aria-label={`Actions for page ${index + 1}`}>
+                            <button type="button" className="icon-button" title="Move page up" aria-label="Move page up" disabled={index === 0} onClick={() => void movePage(page, -1)}><ArrowUp size={15} /></button>
+                            <button type="button" className="icon-button" title="Move page down" aria-label="Move page down" disabled={index === pages.length - 1} onClick={() => void movePage(page, 1)}><ArrowDown size={15} /></button>
+                            <button type="button" className="icon-button" title="Edit page" aria-label="Edit page" onClick={() => openPageEditor(page)}><Pencil size={15} /></button>
+                            <button type="button" className="icon-button" title="Download image" aria-label="Download image" onClick={() => handleDownloadImage(page)}><ImageIcon size={15} /></button>
+                            <button type="button" className="icon-button delete-icon" title="Delete page" aria-label="Delete page" onClick={() => void handleDeletePage(page)}><Trash2 size={15} /></button>
                           </div>
                         </div>
                       </article>
                     ))}
+                  </div>
+                  <div className="export-actions export-actions-bottom" aria-label="PDF export">
+                    <button className="secondary-button" onClick={() => void handleExportPdf(true)} disabled={isExporting || selectedPageIds.length === 0}>
+                      <FileText size={16} /> Export selected ({selectedPageIds.length})
+                    </button>
+                    <button className="primary-button" onClick={() => void handleExportPdf(false)} disabled={isExporting || pages.length === 0}>
+                      <Download size={16} /> {isExporting ? 'Preparing PDF…' : 'Export all PDF'}
+                    </button>
                   </div>
                 </>
               ) : (
@@ -808,45 +933,6 @@ function App() {
             </div>
           )}
 
-          {editingPage && (
-            <div className="editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !isApplyingEdit) setEditingPage(null); }}>
-              <section className="editor-modal" role="dialog" aria-modal="true" aria-labelledby="editor-title">
-                <div className="editor-header">
-                  <div><span className="eyebrow">PAGE TOOLS</span><h2 id="editor-title">Edit page</h2></div>
-                  <button className="icon-button" aria-label="Close editor" onClick={() => setEditingPage(null)} disabled={isApplyingEdit}><X size={17} /></button>
-                </div>
-                <div className="editor-preview">
-                  <img
-                    src={editingPage.id === undefined ? '' : imageUrls.get(editingPage.id)}
-                    alt="Page preview"
-                    style={{ transform: `rotate(${editRotation}deg)`, filter: editFilter === 'grayscale' ? 'grayscale(1) contrast(1.12)' : editFilter === 'document' ? 'grayscale(1) contrast(1.55) brightness(1.08)' : 'none' }}
-                  />
-                </div>
-                <div className="editor-tools">
-                  <div className="editor-tool-row">
-                    <strong>Rotate</strong>
-                    <button className="secondary-button" onClick={() => setEditRotation((value) => (value + 270) % 360)}><RotateCw size={15} /> Rotate left</button>
-                    <button className="secondary-button" onClick={() => setEditRotation((value) => (value + 90) % 360)}><RotateCw size={15} /> Rotate right</button>
-                    <button className="secondary-button" onClick={() => openPageScanner(editingPage)}><Scan size={15} /> Crop &amp; straighten</button>
-                  </div>
-                  <div className="editor-filter-row">
-                    <strong>Appearance</strong>
-                    <div className="filter-options">
-                      <button className={`filter-option ${editFilter === 'original' ? 'active' : ''}`} onClick={() => setEditFilter('original')}>Original</button>
-                      <button className={`filter-option ${editFilter === 'grayscale' ? 'active' : ''}`} onClick={() => setEditFilter('grayscale')}>Grayscale</button>
-                      <button className={`filter-option ${editFilter === 'document' ? 'active' : ''}`} onClick={() => setEditFilter('document')}>Document</button>
-                    </div>
-                  </div>
-                  <p className="editor-help">Document mode increases contrast for handwritten notes. The original page is replaced only when you choose Save changes.</p>
-                </div>
-                <div className="editor-footer">
-                  <button className="secondary-button" onClick={() => setEditingPage(null)} disabled={isApplyingEdit}>Cancel</button>
-                  <button className="primary-button" onClick={() => void savePageEdit()} disabled={isApplyingEdit}>{isApplyingEdit ? 'Saving…' : 'Save changes'}</button>
-                </div>
-              </section>
-            </div>
-          )}
-
           {scannerRequest && (
             <DocumentScanner
               source={scannerRequest.source}
@@ -862,6 +948,8 @@ function App() {
           </footer>
         </div>
       </main>
+        </>
+      )}
     </div>
   );
 }
