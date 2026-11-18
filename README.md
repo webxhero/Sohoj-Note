@@ -1,4 +1,4 @@
-# Sohoj Note v0.8.4
+# Sohoj Note v0.8.4 by CNL Shahid
 
 Sohoj Note is a local-first, installable PWA for organizing handwritten notes by course and notebook.
 
