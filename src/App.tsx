@@ -13,6 +13,7 @@ import {
   RotateCw,
   Image as ImageIcon,
   Layers3,
+  Menu,
   Plus,
   ArrowUp,
   ArrowDown,
@@ -20,6 +21,7 @@ import {
   HardDrive,
   RotateCcw,
   Search,
+  Scan,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -32,6 +34,16 @@ import { prepareImage, downloadBlob, safeFileName } from './lib/image';
 import { exportPagesAsPdf } from './lib/pdf';
 import type { Course, Notebook, NotePage } from './types';
 import { createBackup, parseBackup, restorePageImage } from './lib/backup';
+import DocumentScanner from './components/DocumentScanner';
+import type { CorrectedImage } from './lib/scanner';
+
+interface ScannerRequest {
+  source: Blob;
+  sourceName: string;
+  target: 'new' | 'existing';
+  notebookId: number;
+  page?: NotePage;
+}
 
 function App() {
   const [courses, setCourses] = useState<Course[]>([]);
@@ -53,6 +65,8 @@ function App() {
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [scannerRequest, setScannerRequest] = useState<ScannerRequest | null>(null);
   const [storageBytes, setStorageBytes] = useState(0);
   const [editingPage, setEditingPage] = useState<NotePage | null>(null);
   const [editRotation, setEditRotation] = useState(0);
@@ -61,6 +75,7 @@ function App() {
   const backupInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const scanInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCourse = courses.find((course) => course.id === selectedCourseId) ?? null;
   const selectedNotebook = notebooks.find((notebook) => notebook.id === selectedNotebookId) ?? null;
@@ -307,6 +322,78 @@ function App() {
     }
   }
 
+  async function startNewScan(file?: File) {
+    if (!file || selectedNotebookId === null) return;
+    setError('');
+    setNotice('');
+    try {
+      const prepared = await prepareImage(file);
+      setScannerRequest({
+        source: prepared.blob,
+        sourceName: file.name || 'scanned-page.jpg',
+        target: 'new',
+        notebookId: selectedNotebookId,
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not prepare this image for scanning.');
+    } finally {
+      if (scanInputRef.current) scanInputRef.current.value = '';
+    }
+  }
+
+  function openPageScanner(page: NotePage) {
+    setEditingPage(null);
+    setScannerRequest({
+      source: page.image,
+      sourceName: page.fileName || 'note-page.jpg',
+      target: 'existing',
+      notebookId: page.notebookId,
+      page,
+    });
+  }
+
+  async function saveScannedImage(result: CorrectedImage) {
+    if (!scannerRequest) return;
+    let persisted = false;
+    try {
+      if (scannerRequest.target === 'new') {
+        const existingPages = await db.pages.where('notebookId').equals(scannerRequest.notebookId).toArray();
+        const nextOrder = existingPages.reduce((max, page) => Math.max(max, page.sortOrder), -1) + 1;
+        await db.pages.add({
+          notebookId: scannerRequest.notebookId,
+          chapter: chapterDraft.trim() || 'Unsorted',
+          image: result.blob,
+          createdAt: Date.now(),
+          sortOrder: nextOrder,
+          fileName: scannerRequest.sourceName || `scan-${nextOrder + 1}.jpg`,
+          width: result.width,
+          height: result.height,
+        });
+        persisted = true;
+        setScannerRequest(null);
+        const refreshed = await db.pages.where('notebookId').equals(scannerRequest.notebookId).sortBy('sortOrder');
+        if (selectedNotebookId === scannerRequest.notebookId) setPages(refreshed);
+        setNotice('Scanned page added to this notebook.');
+      } else {
+        const page = scannerRequest.page;
+        if (!page || page.id === undefined) throw new Error('The original page could not be found.');
+        await db.pages.update(page.id, { image: result.blob, width: result.width, height: result.height });
+        persisted = true;
+        setScannerRequest(null);
+        const refreshed = await db.pages.where('notebookId').equals(page.notebookId).sortBy('sortOrder');
+        if (selectedNotebookId === page.notebookId) setPages(refreshed);
+        setNotice('Scanned page updated. Its chapter and page order were preserved.');
+      }
+      setError('');
+    } catch (caught) {
+      const message = persisted
+        ? 'The scanned image was saved, but the page list could not refresh. Reopen the notebook to reload it.'
+        : caught instanceof Error ? caught.message : 'Could not save the scanned page.';
+      setError(message);
+      if (!persisted) throw new Error(message);
+    }
+  }
+
   function openPageEditor(page: NotePage) {
     setEditingPage(page);
     setEditRotation(0);
@@ -498,7 +585,39 @@ function App() {
             {selectedCourse && <><ChevronRight size={14} /><strong>{selectedCourse.name}</strong></>}
             {selectedNotebook && <><ChevronRight size={14} /><strong>{selectedNotebook.name}</strong></>}
           </div>
-          <div className="local-pill"><span className="status-dot" /> Local storage</div>
+          <div className="topbar-actions">
+            <div className="local-pill"><span className="status-dot" /> Local storage</div>
+            <div className="mobile-menu-wrap">
+              <button
+                className="mobile-menu-button"
+                aria-label={showMobileMenu ? "Close navigation menu" : "Open navigation menu"}
+                aria-expanded={showMobileMenu}
+                onClick={() => setShowMobileMenu((value) => !value)}
+              >
+                <Menu size={20} />
+              </button>
+              {showMobileMenu && (
+                <>
+                  <button className="mobile-menu-scrim" aria-label="Close menu" onClick={() => setShowMobileMenu(false)} />
+                  <div className="mobile-menu-panel" role="group" aria-label="App menu">
+                    <button onClick={() => { setShowMobileMenu(false); setShowSettings(true); }}>
+                      <Settings size={16} /> Settings
+                    </button>
+                    <div className="mobile-menu-heading">Backup &amp; storage</div>
+                    <button onClick={() => { setShowMobileMenu(false); void handleBackup(); }} disabled={isBackingUp}>
+                      <Archive size={16} /> {isBackingUp ? 'Creating backup…' : 'Backup all notes'}
+                    </button>
+                    <button onClick={() => { setShowMobileMenu(false); backupInputRef.current?.click(); }} disabled={isRestoring}>
+                      <RotateCcw size={16} /> {isRestoring ? 'Restoring…' : 'Restore backup'}
+                    </button>
+                    <button onClick={() => { setShowMobileMenu(false); setShowSettings(true); }}>
+                      <HardDrive size={16} /> Storage usage
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </header>
 
         <div className="content-wrap">
@@ -534,10 +653,14 @@ function App() {
                   <button className="secondary-button" onClick={() => cameraInputRef.current?.click()} disabled={isSaving}>
                     <Camera size={17} /> Take photo
                   </button>
+                  <button className="secondary-button" onClick={() => scanInputRef.current?.click()} disabled={isSaving}>
+                    <Scan size={17} /> Scan document
+                  </button>
                   <button className="primary-button" onClick={() => uploadInputRef.current?.click()} disabled={isSaving}>
                     <Upload size={17} /> Upload images
                   </button>
                   <input ref={cameraInputRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => event.target.files && void handleFiles(event.target.files)} />
+                  <input ref={scanInputRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => void startNewScan(event.target.files?.[0])} />
                   <input ref={uploadInputRef} className="visually-hidden" type="file" accept="image/*" multiple onChange={(event) => event.target.files && void handleFiles(event.target.files)} />
                 </div>
                 {isSaving && <div className="saving-line"><span className="spinner" /> Preparing and saving your pages…</div>}
@@ -702,6 +825,7 @@ function App() {
                     <strong>Rotate</strong>
                     <button className="secondary-button" onClick={() => setEditRotation((value) => (value + 270) % 360)}><RotateCw size={15} /> Rotate left</button>
                     <button className="secondary-button" onClick={() => setEditRotation((value) => (value + 90) % 360)}><RotateCw size={15} /> Rotate right</button>
+                    <button className="secondary-button" onClick={() => openPageScanner(editingPage)}><Scan size={15} /> Crop &amp; straighten</button>
                   </div>
                   <div className="editor-filter-row">
                     <strong>Appearance</strong>
@@ -719,6 +843,15 @@ function App() {
                 </div>
               </section>
             </div>
+          )}
+
+          {scannerRequest && (
+            <DocumentScanner
+              source={scannerRequest.source}
+              sourceName={scannerRequest.sourceName}
+              onCancel={() => setScannerRequest(null)}
+              onSave={saveScannedImage}
+            />
           )}
 
           <footer className="main-footer">
