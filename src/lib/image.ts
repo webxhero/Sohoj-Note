@@ -52,5 +52,5 @@ export function safeFileName(value: string): string {
     .trim()
     .replace(/[^a-z0-9-_]+/gi, '-')
     .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '') || 'smartnote';
+    .replace(/^-|-$/g, '') || 'sohoj-note';
 }

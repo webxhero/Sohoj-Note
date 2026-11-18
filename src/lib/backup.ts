@@ -48,10 +48,10 @@ export async function createBackup(courses: Course[], notebooks: Notebook[], pag
 }
 
 export function parseBackup(input: unknown): BackupPayload {
-  if (!input || typeof input !== 'object') throw new Error('This is not a valid SmartNote backup.');
+  if (!input || typeof input !== 'object') throw new Error('This is not a valid Sohoj Note backup.');
   const data = input as Partial<BackupPayload>;
   if (data.format !== 'smartnote-backup' || data.version !== 1 || !Array.isArray(data.courses) || !Array.isArray(data.notebooks) || !Array.isArray(data.pages)) {
-    throw new Error('Unsupported or damaged SmartNote backup file.');
+    throw new Error('Unsupported or damaged Sohoj Note backup file.');
   }
   if (!data.courses.every((item) => item && typeof item.name === 'string' && typeof item.createdAt === 'number')) throw new Error('The backup has invalid course data.');
   if (!data.notebooks.every((item) => item && typeof item.name === 'string' && typeof item.courseId === 'number')) throw new Error('The backup has invalid notebook data.');

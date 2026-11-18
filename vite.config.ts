@@ -9,8 +9,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
-        name: 'SmartNote — Your notes, in order',
-        short_name: 'SmartNote',
+        name: 'Sohoj Note — Your notes, in order',
+        short_name: 'Sohoj Note',
         description: 'A private, offline-first notebook for students.',
         theme_color: '#F8FAFD',
         background_color: '#F8FAFD',

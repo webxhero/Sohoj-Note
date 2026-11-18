@@ -147,7 +147,7 @@ function App() {
       const allPages = await db.pages.toArray();
       const backup = await createBackup(allCourses, allNotebooks, allPages);
       const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
-      downloadBlob(blob, `smartnote-backup-${new Date().toISOString().slice(0, 10)}.smartnote.json`);
+      downloadBlob(blob, `sohoj-note-backup-${new Date().toISOString().slice(0, 10)}.smartnote.json`);
       setNotice(`Backup created: ${allCourses.length} courses, ${allNotebooks.length} notebooks and ${allPages.length} pages.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not create your backup.');
@@ -488,8 +488,40 @@ function App() {
         <div className="brand-row">
           <div className="brand-mark"><BookOpen size={21} strokeWidth={2.2} /></div>
           <div>
-            <div className="brand-name">SmartNote</div>
+            <div className="brand-name">Sohoj Note</div>
             <div className="brand-subtitle">Your notes, in order.</div>
+          </div>
+          <div className="mobile-menu-wrap">
+            <button
+              type="button"
+              className="mobile-menu-button"
+              aria-label={showMobileMenu ? 'Close navigation menu' : 'Open navigation menu'}
+              aria-expanded={showMobileMenu}
+              aria-controls="mobile-app-menu"
+              onClick={() => setShowMobileMenu((value) => !value)}
+            >
+              {showMobileMenu ? <X size={20} /> : <Menu size={20} />}
+            </button>
+            {showMobileMenu && (
+              <>
+                <button type="button" className="mobile-menu-scrim" aria-label="Close menu" onClick={() => setShowMobileMenu(false)} />
+                <div id="mobile-app-menu" className="mobile-menu-panel" role="group" aria-label="App menu">
+                  <button type="button" onClick={() => { setShowMobileMenu(false); setShowSettings(true); }}>
+                    <Settings size={16} /> Settings
+                  </button>
+                  <div className="mobile-menu-heading">Backup &amp; storage</div>
+                  <button type="button" onClick={() => { setShowMobileMenu(false); void handleBackup(); }} disabled={isBackingUp}>
+                    <Archive size={16} /> {isBackingUp ? 'Creating backup…' : 'Backup all notes'}
+                  </button>
+                  <button type="button" onClick={() => { setShowMobileMenu(false); backupInputRef.current?.click(); }} disabled={isRestoring}>
+                    <RotateCcw size={16} /> {isRestoring ? 'Restoring…' : 'Restore backup'}
+                  </button>
+                  <button type="button" onClick={() => { setShowMobileMenu(false); setShowSettings(true); }}>
+                    <HardDrive size={16} /> Storage usage
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -545,7 +577,7 @@ function App() {
               <span>Your notes stay in this browser.</span>
             </div>
           </div>
-          <div className="sidebar-version">SMARTNOTE · LOCAL FIRST</div>
+          <div className="sidebar-version">SOHOJ NOTE · LOCAL FIRST</div>
         </div>
       </aside>
 
@@ -571,7 +603,7 @@ function App() {
               </button>
             </div>
             <footer className="settings-footer">
-              <span>SmartNote · Local first</span>
+              <span>Sohoj Note · Local first</span>
               <button className="primary-button compact" onClick={() => setShowSettings(false)}>Done</button>
             </footer>
           </section>
@@ -587,36 +619,6 @@ function App() {
           </div>
           <div className="topbar-actions">
             <div className="local-pill"><span className="status-dot" /> Local storage</div>
-            <div className="mobile-menu-wrap">
-              <button
-                className="mobile-menu-button"
-                aria-label={showMobileMenu ? "Close navigation menu" : "Open navigation menu"}
-                aria-expanded={showMobileMenu}
-                onClick={() => setShowMobileMenu((value) => !value)}
-              >
-                <Menu size={20} />
-              </button>
-              {showMobileMenu && (
-                <>
-                  <button className="mobile-menu-scrim" aria-label="Close menu" onClick={() => setShowMobileMenu(false)} />
-                  <div className="mobile-menu-panel" role="group" aria-label="App menu">
-                    <button onClick={() => { setShowMobileMenu(false); setShowSettings(true); }}>
-                      <Settings size={16} /> Settings
-                    </button>
-                    <div className="mobile-menu-heading">Backup &amp; storage</div>
-                    <button onClick={() => { setShowMobileMenu(false); void handleBackup(); }} disabled={isBackingUp}>
-                      <Archive size={16} /> {isBackingUp ? 'Creating backup…' : 'Backup all notes'}
-                    </button>
-                    <button onClick={() => { setShowMobileMenu(false); backupInputRef.current?.click(); }} disabled={isRestoring}>
-                      <RotateCcw size={16} /> {isRestoring ? 'Restoring…' : 'Restore backup'}
-                    </button>
-                    <button onClick={() => { setShowMobileMenu(false); setShowSettings(true); }}>
-                      <HardDrive size={16} /> Storage usage
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
           </div>
         </header>
 
@@ -635,7 +637,7 @@ function App() {
                   <button className="back-link" onClick={() => setSelectedNotebookId(null)}><ArrowLeft size={15} /> Back to notebooks</button>
                   <div className="eyebrow">{selectedCourse?.name ?? 'COURSE'} / NOTEBOOK</div>
                   <h1>{selectedNotebook.name}</h1>
-                  <p className="page-subtitle">Keep adding pages. SmartNote stores each image separately and builds a PDF when you export.</p>
+                  <p className="page-subtitle">Keep adding pages. Sohoj Note stores each image separately and builds a PDF when you export.</p>
                 </div>
                 <button className="text-button danger-text" onClick={() => void handleDeleteNotebook(selectedNotebook)}><Trash2 size={15} /> Delete notebook</button>
               </div>
@@ -694,7 +696,7 @@ function App() {
                     {pages.map((page, index) => (
                       <article className={`page-card ${page.id !== undefined && selectedPageIds.includes(page.id) ? 'page-card-selected' : ''}`} key={page.id}>
                         <div className="page-image-wrap">
-                          <img src={page.id === undefined ? '' : imageUrls.get(page.id)} alt={`Scanned note page ${index + 1}`} />
+                          <img src={page.id === undefined ? '' : imageUrls.get(page.id)} alt={`Scanned note page ${index + 1}`} loading="lazy" decoding="async" />
                           <label className="page-check" aria-label={`Select page ${index + 1}`}>
                             <input type="checkbox" checked={page.id !== undefined && selectedPageIds.includes(page.id)} onChange={() => page.id !== undefined && togglePageSelection(page.id)} />
                             <span><Check size={13} /></span>
@@ -855,7 +857,7 @@ function App() {
           )}
 
           <footer className="main-footer">
-            <span>SmartNote · Built for your study routine</span>
+            <span>Sohoj Note · Built for your study routine</span>
             <span><ShieldCheck size={13} /> Your notes are stored locally</span>
           </footer>
         </div>
