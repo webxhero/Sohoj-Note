@@ -30,7 +30,7 @@ import {
   X
 } from 'lucide-react';
 import { db, deleteCourseAndContents, deleteNotebookAndPages } from './db';
-import { prepareImage, downloadBlob, safeFileName } from './lib/image';
+import { DEFAULT_IMAGE_ADJUSTMENTS, prepareImage, processDocumentImage, downloadBlob, safeFileName } from './lib/image';
 import { exportPagesAsPdf } from './lib/pdf';
 import type { Course, Notebook, NotePage } from './types';
 import { createBackup, parseBackup, restorePageImage } from './lib/backup';
@@ -70,7 +70,9 @@ function App() {
   const [storageBytes, setStorageBytes] = useState(0);
   const [editingPage, setEditingPage] = useState<NotePage | null>(null);
   const [editRotation, setEditRotation] = useState(0);
-  const [editFilter, setEditFilter] = useState<'original' | 'grayscale' | 'document'>('original');
+  const [editFilter, setEditFilter] = useState<'original' | 'magic' | 'grayscale' | 'document'>('original');
+  const [editMagicPreviewUrl, setEditMagicPreviewUrl] = useState('');
+  const [isMagicPreviewProcessing, setIsMagicPreviewProcessing] = useState(false);
   const [isApplyingEdit, setIsApplyingEdit] = useState(false);
   const backupInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -107,13 +109,49 @@ function App() {
   }, [editingPage]);
 
   useEffect(() => {
-    if (!editingPage) return;
+    if (!editingPage || scannerRequest) return;
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !isApplyingEdit) setEditingPage(null);
     };
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [editingPage, isApplyingEdit]);
+  }, [editingPage, isApplyingEdit, scannerRequest]);
+
+  useEffect(() => {
+    if (!editingPage || editFilter !== 'magic') {
+      setEditMagicPreviewUrl('');
+      setIsMagicPreviewProcessing(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    let previewUrl = '';
+    setEditMagicPreviewUrl('');
+    setIsMagicPreviewProcessing(true);
+
+    processDocumentImage(
+      editingPage.image,
+      'bw',
+      DEFAULT_IMAGE_ADJUSTMENTS,
+      1600,
+      controller.signal,
+    ).then(({ blob }) => {
+      if (controller.signal.aborted) return;
+      previewUrl = URL.createObjectURL(blob);
+      setEditMagicPreviewUrl(previewUrl);
+    }).catch((caught: unknown) => {
+      if (!controller.signal.aborted) {
+        setError(caught instanceof Error ? caught.message : 'Could not prepare the Magic preview.');
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setIsMagicPreviewProcessing(false);
+    });
+
+    return () => {
+      controller.abort();
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [editingPage, editFilter]);
 
   useEffect(() => {
     let active = true;
@@ -347,12 +385,16 @@ function App() {
 
   async function startNewScan(file?: File) {
     if (!file || selectedNotebookId === null) return;
+    if (!file.type.startsWith('image/')) {
+      setError('Choose a JPEG, PNG, or another supported image file to scan.');
+      if (scanInputRef.current) scanInputRef.current.value = '';
+      return;
+    }
     setError('');
     setNotice('');
     try {
-      const prepared = await prepareImage(file);
       setScannerRequest({
-        source: prepared.blob,
+        source: file,
         sourceName: file.name || 'scanned-page.jpg',
         target: 'new',
         notebookId: selectedNotebookId,
@@ -365,7 +407,6 @@ function App() {
   }
 
   function openPageScanner(page: NotePage) {
-    setEditingPage(null);
     setScannerRequest({
       source: page.image,
       sourceName: page.fileName || 'note-page.jpg',
@@ -402,6 +443,7 @@ function App() {
         if (!page || page.id === undefined) throw new Error('The original page could not be found.');
         await db.pages.update(page.id, { image: result.blob, width: result.width, height: result.height });
         persisted = true;
+        setEditingPage(null);
         setScannerRequest(null);
         const refreshed = await db.pages.where('notebookId').equals(page.notebookId).sortBy('sortOrder');
         if (selectedNotebookId === page.notebookId) setPages(refreshed);
@@ -428,8 +470,20 @@ function App() {
     if (!editingPage || editingPage.id === undefined) return;
     setIsApplyingEdit(true);
     setError('');
+    let bitmap: ImageBitmap | null = null;
     try {
-      const bitmap = await createImageBitmap(editingPage.image);
+      // Magic uses the same adaptive black-and-white scanner pipeline as DocumentScanner.
+      // Every edit is rendered from the untouched stored image, never from the last preview.
+      const sourceBlob = editFilter === 'magic'
+        ? (await processDocumentImage(
+          editingPage.image,
+          'bw',
+          DEFAULT_IMAGE_ADJUSTMENTS,
+          4200,
+        )).blob
+        : editingPage.image;
+
+      bitmap = await createImageBitmap(sourceBlob);
       const rotated = Math.abs(editRotation % 180) === 90;
       const width = rotated ? bitmap.height : bitmap.width;
       const height = rotated ? bitmap.width : bitmap.height;
@@ -444,8 +498,9 @@ function App() {
       context.rotate((editRotation * Math.PI) / 180);
       context.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2);
       bitmap.close();
+      bitmap = null;
       const blob = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob((result) => result ? resolve(result) : reject(new Error('Could not save the edited image.')), 'image/jpeg', 0.88);
+        canvas.toBlob((result) => result ? resolve(result) : reject(new Error('Could not save the edited image.')), 'image/jpeg', 0.96);
       });
       await db.pages.update(editingPage.id, { image: blob, width, height });
       const refreshed = await db.pages.where('notebookId').equals(editingPage.notebookId).sortBy('sortOrder');
@@ -455,6 +510,7 @@ function App() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not edit this page.');
     } finally {
+      bitmap?.close();
       setIsApplyingEdit(false);
     }
   }
@@ -506,6 +562,17 @@ function App() {
     setSelectedPageIds(ids.length === selectedPageIds.length ? [] : ids);
   }
 
+  if (scannerRequest) {
+    return (
+      <DocumentScanner
+        source={scannerRequest.source}
+        sourceName={scannerRequest.sourceName}
+        onCancel={() => setScannerRequest(null)}
+        onSave={saveScannedImage}
+      />
+    );
+  }
+
   return (
     <div className={`app-shell ${editingPage ? 'app-shell-page-editor' : ''}`}>
       {editingPage ? (
@@ -542,7 +609,9 @@ function App() {
 
             <div className="editor-preview page-editor-preview">
               <img
-                src={editingPage.id === undefined ? '' : imageUrls.get(editingPage.id)}
+                src={editFilter === 'magic' && editMagicPreviewUrl
+                  ? editMagicPreviewUrl
+                  : editingPage.id === undefined ? '' : imageUrls.get(editingPage.id)}
                 alt="Page preview"
                 style={{
                   transform: `rotate(${editRotation}deg)`,
@@ -553,6 +622,11 @@ function App() {
                       : 'none',
                 }}
               />
+              {editFilter === 'magic' && isMagicPreviewProcessing && (
+                <div className="editor-magic-processing" role="status">
+                  <span className="scanner-spinner" /> Preparing Magic scan preview…
+                </div>
+              )}
             </div>
 
             <section className="editor-tools page-editor-tools" aria-label="Page editing tools">
@@ -598,19 +672,24 @@ function App() {
               <div className="editor-filter-row page-editor-filter-row">
                 <strong>Appearance</strong>
                 <div className="filter-options">
-                  <button type="button" className={`filter-option ${editFilter === 'original' ? 'active' : ''}`} onClick={() => setEditFilter('original')}>Original</button>
-                  <button type="button" className={`filter-option ${editFilter === 'grayscale' ? 'active' : ''}`} onClick={() => setEditFilter('grayscale')}>Grayscale</button>
-                  <button type="button" className={`filter-option ${editFilter === 'document' ? 'active' : ''}`} onClick={() => setEditFilter('document')}>Document</button>
+                  <button type="button" className={`filter-option ${editFilter === 'original' ? 'active' : ''}`} onClick={() => setEditFilter('original')} disabled={isApplyingEdit}>Original</button>
+                  <button type="button" className={`filter-option ${editFilter === 'magic' ? 'active' : ''}`} onClick={() => setEditFilter('magic')} disabled={isApplyingEdit}>Magic</button>
+                  <button type="button" className={`filter-option ${editFilter === 'grayscale' ? 'active' : ''}`} onClick={() => setEditFilter('grayscale')} disabled={isApplyingEdit}>Grayscale</button>
+                  <button type="button" className={`filter-option ${editFilter === 'document' ? 'active' : ''}`} onClick={() => setEditFilter('document')} disabled={isApplyingEdit}>Document</button>
                 </div>
               </div>
-              <p className="editor-help">Document mode increases contrast for handwritten notes. The original page is replaced only when you choose Save changes.</p>
+              <p className="editor-help">
+                {editFilter === 'magic'
+                  ? 'Magic uses the scanner’s adaptive black-and-white cleanup to whiten paper and clarify text. The original is replaced only when you save.'
+                  : 'Document mode increases contrast for handwritten notes. The original page is replaced only when you choose Save changes.'}
+              </p>
             </section>
           </div>
 
           <footer className="page-editor-footer">
             <button className="secondary-button" onClick={() => setEditingPage(null)} disabled={isApplyingEdit}>Cancel</button>
-            <button className="primary-button" onClick={() => void savePageEdit()} disabled={isApplyingEdit}>
-              {isApplyingEdit ? 'Saving…' : 'Save changes'}
+            <button className="primary-button" onClick={() => void savePageEdit()} disabled={isApplyingEdit || (editFilter === 'magic' && isMagicPreviewProcessing)}>
+              {isApplyingEdit ? 'Saving…' : editFilter === 'magic' && isMagicPreviewProcessing ? 'Preparing Magic…' : 'Save changes'}
             </button>
           </footer>
         </main>
@@ -931,15 +1010,6 @@ function App() {
                 <span><ImageIcon size={15} /> Keep original images</span>
               </div>
             </div>
-          )}
-
-          {scannerRequest && (
-            <DocumentScanner
-              source={scannerRequest.source}
-              sourceName={scannerRequest.sourceName}
-              onCancel={() => setScannerRequest(null)}
-              onSave={saveScannedImage}
-            />
           )}
 
           <footer className="main-footer">
